@@ -2,6 +2,7 @@ from numbers import Number
 import numpy as np
 import pandas as pd
 from .util import ensure_rng
+import inspect
 
 
 class TargetSpace(object):
@@ -13,9 +14,9 @@ class TargetSpace(object):
     target_func: function, optional (default=None)
         Target function to be maximized.
 
-    pbounds: dict
+    pbounds: dict, optional (default = None)
         Dictionary with parameters names as keys and a tuple with minimum
-        and maximum values. Mandatory argument.
+        and maximum values.
 
     random_state: int, RandomState, or None, optional (default=None)
         Optionally specify a seed for a random number generator
@@ -27,26 +28,52 @@ class TargetSpace(object):
     target_column: str, optional (default=None)
         Name of the column that will act as the target value of the optimization.
         Only works if dataset is passed.
+    
+    barrier_func: dict, optional (default = None)
+        Dictionary of barrier constraint functions in case of Expected Barrier or Expected Improvement methods
 
     debug: bool, optional (default=False)
         Whether or not to print detailed debugging information
     """
     def __init__(self, target_func=None, pbounds=None, random_state=None,
-                 dataset=None, target_column=None, debug=False):
-        if pbounds is None:
-            raise ValueError("pbounds must be specified")
+                 dataset=None, target_column=None, barrier_func = None, debug=False):
+        if pbounds is None and barrier_func is None:
+            raise ValueError("pbounds or barrier_func must be specified")
+        
+        if pbounds is not None and barrier_func is not None:
+            raise ValueError("Cannot initialize both pbounds and barrier_func")
 
         self._debug = debug
 
-        # Get the name of the parameters, aka the optimization variables/columns
-        self._keys = sorted(pbounds)
-
         # Create an array with parameters bounds
-        self._bounds = np.array(
-            [item[1] for item in sorted(pbounds.items(), key=lambda x: x[0])],
-            dtype=float
-        )
+        if pbounds is not None: 
+            # Get the name of the parameters, aka the optimization variables/columns
+            self._keys = sorted(pbounds)
+            self._bounds = np.array(
+                [item[1] for item in sorted(pbounds.items(), key=lambda x: x[0])],  
+                dtype=float
+            )
+        # pbounds.items() returns a list of tuples with key as the first element and the value as the second.
+        # sorted will sort the keys in ascending order
+            
+        if barrier_func is not None:
+            # Calculate the parameters of the first barrier function (which are the same for all barrier functions)
+            self._barrier_functions = list(barrier_func.values())
+            parameters = inspect.signature(self._barrier_functions[0]).parameters
+            # parameters will output an ordered dictionary like this:
+            # OrderedDict([('a', <Parameter "a = 5">), ('b', <Parameter "b=10">),...
+            # we are only interested in the keys here:
+            self._keys =  parameters.keys()
+            self._bounds = None
 
+
+            
+        if barrier_func is not None:
+            self.barrier_func = barrier_func
+        else:
+            self.barrier_func = None
+
+        
         if self._debug: print("Initializing TargetSpace with bounds:", pbounds)
 
         # Initialize other members
@@ -57,7 +84,12 @@ class TargetSpace(object):
         # preallocated memory for X and Y points
         self._params = pd.DataFrame()
         self._target = np.empty(shape=(0))
-
+        if self.barrier_func is not None:
+            '''
+            barrier_targets will contain the evaluation of the barrier functions, in particular
+            a matrix of shape (n_evaluations, n_constraints)
+            '''
+            self._barrier_targets = np.empty(shape = (0,len(self.barrier_func)))
         # Other information to be recorded
         self._target_dict_info = pd.DataFrame()
         self._optimization_info = pd.DataFrame()
@@ -85,14 +117,17 @@ class TargetSpace(object):
     @property
     def dim(self):
         return len(self._keys)
-
+            
     @property
     def keys(self):
         return self._keys
 
     @property
     def bounds(self):
-        return self._bounds
+        if self._bounds is not None:
+            return self._bounds
+        else:
+            raise ValueError("bounds are defined only when using pbounds")
 
     @property
     def dataset(self):
@@ -105,6 +140,20 @@ class TargetSpace(object):
     @property
     def indexes(self):
         return self._params.index
+    
+    @property
+    def barriers(self):
+        if self.barrier_func is not None:
+            return self.barrier_func
+        else:
+            raise ValueError("barrier_func not defined")
+        
+    @property
+    def target_barriers(self):
+        if self.barrier_func is not None:
+            return self._barrier_targets
+        else:
+            raise ValueError("target_barriers not defined")
 
 
     def params_to_array(self, params):
@@ -145,6 +194,12 @@ class TargetSpace(object):
             )
         return x
 
+    def register_barriers(self, target_barriers):
+        '''
+        Append the constraint evaluations
+        '''
+        self._barrier_targets = np.vstack([self._barrier_targets, [target_barriers]])
+        return target_barriers
 
     def register(self, params, target, idx=None):
         """
@@ -184,6 +239,8 @@ class TargetSpace(object):
         x_df = pd.DataFrame(params.reshape(1, -1), columns=self._keys, index=[idx], dtype=float)
         self._params = pd.concat((self._params, x_df))
         self._target = np.concatenate([self._target, [value]])
+        
+        
         if info:  # The return value of the target function is a dict
             if self._target_dict_info.empty:
                 # Initialize member
@@ -201,6 +258,33 @@ class TargetSpace(object):
         """Register relevant information into self._optimization_info"""
         self._optimization_info = pd.concat((self._optimization_info, info_new))
         if self._debug: print("Registered optimization information:", info_new, sep="\n")
+
+    def probe_barriers(self, params, idx = None):
+        '''
+        Evaluates the barrier functions on a single point x and records them as observations
+                Parameters
+        ----------
+        params: dict
+            A single point, with len(x) == self.dim
+
+        idx: int or None, optional (default=None)
+            The dataset index of the point to be probed, or None if no dataset is being used
+
+        Returns
+        -------
+        target_value: float np.array
+            Barrier functions values.
+        '''
+        if self._debug: print("Probing_barriers at point: index {}, value {}".format(idx, params))
+        x = self._as_array(params)
+
+        params = dict(zip(self._keys, x))
+        evaluations = [self._barrier_functions[i](**params) for i in range(len(self._barrier_functions))]
+        target_barriers = np.array(evaluations)
+        target_barriers_values = self.register_barriers(target_barriers)
+
+        if self._debug: print("Probed barrier_target values:", target_barriers_values)
+        return target_barriers_values
 
 
     def probe(self, params, idx=None):
@@ -257,11 +341,18 @@ class TargetSpace(object):
             data = self.dataset.loc[idx, self.keys].to_numpy()
             if self._debug: print("Randomly sampled dataset point: index {}, value {}".format(idx, data))
         else:
-            idx = None
-            data = np.empty((1, self.dim))
-            for col, (lower, upper) in enumerate(self._bounds):
-                data.T[col] = self.random_state.uniform(lower, upper, size=1)
-            if self._debug: print("Uniform randomly sampled point: value {}".format(data))
+            if self._bounds is not None:
+                idx = None
+                data = np.empty((1, self.dim))
+                for col, (lower, upper) in enumerate(self._bounds):
+                    data.T[col] = self.random_state.uniform(lower, upper, size=1)
+                if self._debug: print("Uniform randomly sampled point: value {}".format(data))
+            if self.barrier_func is not None:
+                idx = None
+                data = np.empty((1,self.dim))
+                for col in range(len(self.barrier_func)):
+                    data.T[col] = self.random_state(lower = -1000, upper = 1000, size = 1)
+                if self._debug: print("Uniform randomly sampled point: value {}".format(data))
         return idx, self.array_to_params(data.ravel())
 
 
