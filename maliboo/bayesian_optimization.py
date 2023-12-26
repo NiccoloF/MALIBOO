@@ -127,6 +127,22 @@ class BayesianOptimization(Observable):
             random_state=self._random_state,
         )
 
+        # GPs for contraints in barrier method -> add checks if we use this method
+        if self._space.barrier_func is not None:
+            # self._gps_barriers is a list that containts the gp associated with each barrier function
+            self._gps_barriers = []
+            for _ in range(self._space.n_constraints):
+                # Initialize every gp in the same way ####################### think of it
+                self._gps_barriers.append(GaussianProcessRegressor(
+                    kernel=Matern(nu=2.5),
+                    alpha=1e-6,
+                    normalize_y=True,
+                    n_restarts_optimizer=5,
+                    random_state=self._random_state,
+                ))
+        else:
+            self._gps_barriers = None
+
         super(BayesianOptimization, self).__init__(events=DEFAULT_EVENTS)
 
         if self._debug: print("BayesianOptimization initialization completed")
@@ -149,9 +165,11 @@ class BayesianOptimization(Observable):
         return self._space.dataset
 
 
-    def register(self, params, target, idx=None):
+    def register(self, params, target, target_barrier=None, idx=None):
         """Expect observation with known target"""
         self._space.register(params, target, idx)
+        if target_barrier is not None:
+            self._space.register_barriers(params, target_barrier, idx)
         self.dispatch(Events.OPTIMIZATION_STEP)
 
 
@@ -185,8 +203,12 @@ class BayesianOptimization(Observable):
             return None
         else:
             target_val = self._space.probe(params, idx=idx)
+            target_val_barrier = None
+            # Probe also barrier functions
+            if self._space.barrier_func is not None:
+                target_val_barrier = self._space.probe_barriers(params,idx=idx)
             self.dispatch(Events.OPTIMIZATION_STEP)
-            return target_val
+            return target_val , target_val_barrier
 
 
     def suggest(self, utility_function):
@@ -217,7 +239,15 @@ class BayesianOptimization(Observable):
         # we don't really need to see them here.
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            self._gp.fit(self._space.params, self._space.target)
+            self._gp.fit(self._space.params, self._space.target) 
+            # fit GPs for constraints
+            if self._space.barrier_func is not None:
+                # Get the targets associated with every function
+                target_barrier = self._space.target_barriers
+                for i in range(self._space.n_constraints):
+                    # Fit the gp of the correspondent barrier function with the right targets
+                    self._gps_barriers[i].fit(self._space.params, target_barrier[:,i])
+
 
         if self.dataset is None:
             dataset_acq = None
@@ -241,6 +271,8 @@ class BayesianOptimization(Observable):
             bounds=self._space.bounds,
             random_state=self._random_state,
             dataset=dataset_acq,
+            gps_barriers=self._gps_barriers,
+            space=self._space,
             debug=self._debug
         )
 
@@ -414,7 +446,7 @@ class BayesianOptimization(Observable):
                 # sample new point
                 if self._debug: print("New iteration {}: suggesting new point".format(iteration))
                 util.update_params()
-                if 'ml' in acq:  # if requird, train ML model
+                if 'ml' in acq:  # if required, train ML model
                     ml_model = self.train_ml_model(y_name=util.ml_target)
                     util.set_ml_model(ml_model)
                 x_probe, idx, acq_val = self.suggest(util)
@@ -428,7 +460,7 @@ class BayesianOptimization(Observable):
             if self.dataset is None or self._space.target_column is None:
                 # No dataset, or dataset for X only: we evaluate the target function directly
                 if self._debug: print("No dataset, or dataset for X only: evaluating target function")
-                target_value = self.probe(x_probe, idx=idx, lazy=False)
+                target_value , target_value_barrier = self.probe(x_probe, idx=idx, lazy=False)
             else:
                 # Dataset for both X and y: register point entirely from dataset without probe()
                 if self._debug: print("Dataset Xy: registering dataset point")
@@ -436,7 +468,7 @@ class BayesianOptimization(Observable):
                     idx, target_value = self._space.find_point_in_dataset(x_probe)
                 else:
                     target_value = self.dataset.loc[idx, self._space.target_column]
-                self.register(self._space.params_to_array(x_probe), target_value, idx)
+                self.register(self._space.params_to_array(x_probe), target_value, target_value_barrier, idx)
 
             # Compute ML prediction and check stopping condition
             y_true_ml = self.get_ml_target_data(util.ml_target).iloc[-1] if hasattr(util, 'ml_model') else None

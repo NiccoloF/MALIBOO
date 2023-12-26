@@ -5,7 +5,7 @@ from scipy.optimize import minimize
 
 
 def acq_max(ac, gp, y_max, bounds, random_state, n_warmup=10000, n_iter=10, dataset=None,
-            debug=False):
+            gps_barriers=None, space = None, debug=False):
     """
     A function to find the maximum of the acquisition function
 
@@ -38,6 +38,12 @@ def acq_max(ac, gp, y_max, bounds, random_state, n_warmup=10000, n_iter=10, data
 
     dataset: pandas.DataFrame, optional (default=None)
         The (possibly reduced) domain dataset, if any, on which the maximum is to be found
+    
+    gps_barriers: list
+        List of sklearn.gaussian_process.GaussianProcessRegressor objects each associated with a barrier function
+
+    space: TargetSpace object
+        Istance of the space we are working on
 
     debug: bool, optional (default=False)
         Whether or not to print detailed debugging information
@@ -60,9 +66,18 @@ def acq_max(ac, gp, y_max, bounds, random_state, n_warmup=10000, n_iter=10, data
         x_tries = dataset.values
     else:
         if debug: print("No dataset, initial grid will be random with shape {}".format((n_warmup, bounds.shape[0])))
-        x_tries = random_state.uniform(bounds[:, 0], bounds[:, 1],
+        # Generate random points
+        if gps_barriers is None:
+            x_tries = random_state.uniform(bounds[:, 0], bounds[:, 1],
                                        size=(n_warmup, bounds.shape[0]))
-    ys = ac(x_tries, gp=gp, y_max=y_max)
+        else:
+            _ , x_tries = space.random_points(size=n_warmup)
+
+    if gps_barriers is None:
+        ys = ac(x_tries, gp=gp, y_max=y_max)
+    else:
+        ys = ac(x_tries, gp=gp, y_max=y_max, gps=gps_barriers)
+
     if debug: print("Acquisition evaluated successfully on grid")
     idx = ys.argmax()  # this index is relative to the local x_tries values matrix
     x_max = x_tries[idx]
@@ -79,14 +94,23 @@ def acq_max(ac, gp, y_max, bounds, random_state, n_warmup=10000, n_iter=10, data
     if debug: print("Best point on initial grid is ac({}) = {}".format(x_max, max_acq))
 
     # Explore the parameter space more throughly
-    x_seeds = random_state.uniform(bounds[:, 0], bounds[:, 1],
+    if gps_barriers is None:
+        x_seeds = random_state.uniform(bounds[:, 0], bounds[:, 1],
                                    size=(n_iter, bounds.shape[0]))
+    else:
+        _ , x_seeds = space.random_points(size=n_iter)
 
     if debug: print("Calling minimize() with", len(x_seeds), "different starting seeds")
 
     for x_try in x_seeds:
         # Find the minimum of minus the acquisition function
-        res = minimize(lambda x: -ac(x.reshape(1, -1), gp=gp, y_max=y_max),
+        if gps_barriers is None:
+            res = minimize(lambda x: -ac(x.reshape(1, -1), gp=gp, y_max=y_max),
+                       x_try.reshape(1, -1),
+                       bounds=bounds,
+                       method="L-BFGS-B")
+        else:
+            res = minimize(lambda x: -ac(x.reshape(1, -1), gp=gp, y_max=y_max, gps=gps_barriers),
                        x_try.reshape(1, -1),
                        bounds=bounds,
                        method="L-BFGS-B")
@@ -103,7 +127,10 @@ def acq_max(ac, gp, y_max, bounds, random_state, n_warmup=10000, n_iter=10, data
 
     # Clip output to make sure it lies within the bounds. Due to floating
     # point technicalities this is not always the case.
-    return np.clip(x_max, bounds[:, 0], bounds[:, 1]), None, max_acq
+    if gps_barriers is None:
+        return np.clip(x_max, bounds[:, 0], bounds[:, 1]), None, max_acq
+    else:
+        return x_max, None, max_acq
 
 
 class UtilityFunction(object):
@@ -190,7 +217,11 @@ class UtilityFunction(object):
                 if self._debug: print("Using default eic_ml_exp_B = 2")
                 acq_info['eic_ml_exp_B'] = 2.0
             self.set_acq_info_field(acq_info, 'eic_ml_exp_B')
-
+        
+        # For EIC-Barrier Method acquisition
+        if 'eic_bm' in kind:
+            self.set_acq_info_field(acq_info, 'static_lambda')
+            
 
     def update_params(self):
         self._iters_counter += 1
@@ -203,7 +234,7 @@ class UtilityFunction(object):
         self.ml_model = model
 
 
-    def utility(self, x, gp, y_max):
+    def utility(self, x, gp, y_max, gps=None):
         if self.kind == 'ucb':
             return self._ucb(x, gp, self.kappa)
         if self.kind == 'poi':
@@ -217,6 +248,10 @@ class UtilityFunction(object):
         if self.kind == 'eic_ml':
             return self._eic_ml(x, gp, y_max, self.xi, self.eic_ml_var, self.ml_model, self.ml_bounds,
                                 self.eic_bounds, self.eic_P_func, self.eic_Q_func, self.eic_ml_exp_B)
+        if self.kind == 'eb':
+            return self._eb(x, gp, gps)
+        if self.kind == 'eic_bm':
+            return self._eic_bm(x, gp, y_max, gps,self.static_lambda)
         raise NotImplementedError("The utility function {} has not been implemented.".format(self.kind))
 
 
@@ -315,6 +350,43 @@ class UtilityFunction(object):
             eic *= indicator
 
         return eic
+    
+    # check how to deal with lambda -> for now initialized with a fixed value
+    @staticmethod
+    def _eb(x,gp,gps,lam = 0.1):
+        """Expected Barrier"""
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            mean = gp.predict(x)
+        act = -mean
+        for i in len(gps):
+            # Compute mean and std for every gp
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                mean , std = gps[i].predict(x,return_std=True)
+            act = act + 1/lam*(np.log(-mean) + std**2/(2*mean**2))
+        return act
+
+
+    @staticmethod
+    def _eic_bm(x,gp,y_max,gps,static_lambda,lam = 0.1):
+        """Expected Improvement Constrained with Barrier Method"""
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            mean , std = gp.predict(x,return_std=True)
+        act = (y_max-mean)*norm.cdf((y_max-mean)/std) + std*norm.cdf((y_max-mean)/std)
+
+        if not static_lambda:
+            lam = 1/(std**2)
+
+        for i in len(gps):
+            # Compute mean and std for every gp
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                mean , std = gps[i].predict(x,return_std=True)
+            act = act + 1/lam*(np.log(-mean) + std**2/(2*mean**2))
+        return act
+
 
 
 

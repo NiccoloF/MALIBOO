@@ -154,6 +154,15 @@ class TargetSpace(object):
             return self._barrier_targets
         else:
             raise ValueError("target_barriers not defined")
+        
+    # number of constraints
+    @property
+    def n_constraints(self):
+        if self.barrier_func is not None:
+            return len(self._barrier_functions)
+        else:
+            raise ValueError("target_barriers not defined")
+        
 
 
     def params_to_array(self, params):
@@ -315,9 +324,15 @@ class TargetSpace(object):
         return target_value
 
 
-    def random_sample(self):
+    def random_sample(self,size=1):
         """
         Creates random points within the bounds of the space.
+
+        Parameters
+        ------------
+
+        size: int
+            Number of sample to generate
 
         Returns
         ----------
@@ -345,13 +360,13 @@ class TargetSpace(object):
                 idx = None
                 data = np.empty((1, self.dim))
                 for col, (lower, upper) in enumerate(self._bounds):
-                    data.T[col] = self.random_state.uniform(lower, upper, size=1)
+                    data.T[col] = self.random_state.uniform(lower, upper, size=size)
                 if self._debug: print("Uniform randomly sampled point: value {}".format(data))
             if self.barrier_func is not None:
                 idx = None
                 data = np.empty((1,self.dim))
                 for col in range(len(self.barrier_func)):
-                    data.T[col] = self.random_state(lower = -1000, upper = 1000, size = 1)
+                    data.T[col] = self.random_state(lower = -1000, upper = 1000, size = size)
                 if self._debug: print("Uniform randomly sampled point: value {}".format(data))
         return idx, self.array_to_params(data.ravel())
 
