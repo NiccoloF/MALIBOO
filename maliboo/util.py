@@ -219,7 +219,7 @@ class UtilityFunction(object):
             self.set_acq_info_field(acq_info, 'eic_ml_exp_B')
         
         # For EIC-Barrier Method acquisition
-        if 'eic_bm' in kind:
+        if kind == 'eic_bm' | kind == 'eb':
             self.set_acq_info_field(acq_info, 'static_lambda')
             
 
@@ -249,7 +249,7 @@ class UtilityFunction(object):
             return self._eic_ml(x, gp, y_max, self.xi, self.eic_ml_var, self.ml_model, self.ml_bounds,
                                 self.eic_bounds, self.eic_P_func, self.eic_Q_func, self.eic_ml_exp_B)
         if self.kind == 'eb':
-            return self._eb(x, gp, gps)
+            return self._eb(x, gp, gps,self.static_lambda)
         if self.kind == 'eic_bm':
             return self._eic_bm(x, gp, y_max, gps,self.static_lambda)
         raise NotImplementedError("The utility function {} has not been implemented.".format(self.kind))
@@ -353,12 +353,16 @@ class UtilityFunction(object):
     
     # check how to deal with lambda -> for now initialized with a fixed value
     @staticmethod
-    def _eb(x,gp,gps,lam = 0.1):
+    def _eb(x,gp,gps,static_lambda,lam = 0.1):
         """Expected Barrier"""
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             mean = gp.predict(x)
         act = -mean
+
+        if not static_lambda:
+            lam = 1/(std**2)
+
         for i in len(gps):
             # Compute mean and std for every gp
             with warnings.catch_warnings():
@@ -378,6 +382,7 @@ class UtilityFunction(object):
 
         if not static_lambda:
             lam = 1/(std**2)
+
 
         for i in len(gps):
             # Compute mean and std for every gp

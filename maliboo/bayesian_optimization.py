@@ -85,7 +85,7 @@ class BayesianOptimization(Observable):
         Whether or not to print detailed debugging information
     """
     def __init__(self, f=None, pbounds=None, random_state=None, verbose=2, bounds_transformer=None,
-                 dataset=None, output_path=None, target_column=None, debug=False):
+                 dataset=None, output_path=None, target_column=None,  barrier_func = None, debug=False):
         # Initialize members from arguments
         self._random_state = ensure_rng(random_state)
         self._verbose = verbose
@@ -94,6 +94,7 @@ class BayesianOptimization(Observable):
         self._output_path = os.getcwd() if output_path is None else os.path.join(output_path)
         self._results_file     = os.path.join(self._output_path, 'results.csv')
         self._results_file_tmp = os.path.join(self._output_path, 'results.csv.tmp')
+        self.barrier_func = barrier_func
 
         # Check for coherence among constructor arguments
         if pbounds is None:
@@ -108,7 +109,7 @@ class BayesianOptimization(Observable):
         # Data structure containing the function to be optimized, the bounds of
         # its domain, and a record of the evaluations we have done so far
         self._space = TargetSpace(target_func=f, pbounds=pbounds, random_state=random_state, dataset=dataset,
-                                  target_column=target_column, debug=debug)
+                                  target_column=target_column, barrier_func=self.barrier_func, debug=debug)
         self._queue = Queue()
 
         if self._bounds_transformer:
