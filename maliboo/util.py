@@ -106,12 +106,12 @@ def acq_max(ac, gp, y_max, bounds, random_state, n_warmup=10000, n_iter=10, data
         # Find the minimum of minus the acquisition function
         if gps_barriers is None:
             res = minimize(lambda x: -ac(x.reshape(1, -1), gp=gp, y_max=y_max),
-                       x_try.reshape(1, -1),
+                       x_try, # deleted .reshape(1, -1) and it works (idk why)
                        bounds=bounds,
                        method="L-BFGS-B")
         else:
             res = minimize(lambda x: -ac(x.reshape(1, -1), gp=gp, y_max=y_max, gps=gps_barriers),
-                       x_try.reshape(1, -1),
+                       x_try,
                        bounds=bounds,
                        method="L-BFGS-B")
 
@@ -219,7 +219,7 @@ class UtilityFunction(object):
             self.set_acq_info_field(acq_info, 'eic_ml_exp_B')
         
         # For EIC-Barrier Method acquisition
-        if kind == 'eic_bm' | kind == 'eb':
+        if kind == 'eic_bm' or kind == 'eb':
             self.set_acq_info_field(acq_info, 'static_lambda')
             
 
@@ -351,7 +351,7 @@ class UtilityFunction(object):
 
         return eic
     
-    # check how to deal with lambda -> for now initialized with a fixed value
+    # check how to deal with lambda -> up to now initialized with a fixed value
     @staticmethod
     def _eb(x,gp,gps,static_lambda,lam = 0.1):
         """Expected Barrier"""
@@ -360,6 +360,7 @@ class UtilityFunction(object):
             mean = gp.predict(x)
         act = -mean
 
+        # bool to specify lambda fixed or not
         if not static_lambda:
             lam = 1/(std**2)
 
@@ -380,6 +381,7 @@ class UtilityFunction(object):
             mean , std = gp.predict(x,return_std=True)
         act = (y_max-mean)*norm.cdf((y_max-mean)/std) + std*norm.cdf((y_max-mean)/std)
 
+        # bool to specify lambda fixed or not
         if not static_lambda:
             lam = 1/(std**2)
 
