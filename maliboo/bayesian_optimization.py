@@ -178,7 +178,7 @@ class BayesianOptimization(Observable):
         self._space.register_optimization_info(info_new)
 
 
-    def probe(self, params, idx=None, lazy=True):
+    def  probe(self, params, idx=None, lazy=True):
         """
         Evaluates the function on the given points. Useful to guide the optimizer.
 
@@ -581,6 +581,10 @@ class BayesianOptimization(Observable):
         results.rename(index={-1: None}, inplace=True)
         self._space._params = results[self._space.keys]
         self._space._target = results['target']
+        # has to be optimized: idk how the temp file is filled up
+        if self.barrier_func is not None:
+            for i in range(len(self._space._params)):
+                self._space.probe_barriers(self._space._params.iloc[i,:])
         other_cols = [_ for _ in results.columns if _ not in self._space.keys+['target'] ]
         self._space._optimization_info = results[other_cols]
         if 'memory_queue' in results:

@@ -67,11 +67,12 @@ def acq_max(ac, gp, y_max, bounds, random_state, n_warmup=10000, n_iter=10, data
     else:
         if debug: print("No dataset, initial grid will be random with shape {}".format((n_warmup, bounds.shape[0])))
         # Generate random points
-        if gps_barriers is None:
+        if bounds is not None:
             x_tries = random_state.uniform(bounds[:, 0], bounds[:, 1],
                                        size=(n_warmup, bounds.shape[0]))
         else:
-            _ , x_tries = space.random_points(size=n_warmup)
+            x_tries = random_state.uniform(-1000, 1000,
+                                       size=(n_warmup, bounds.shape[0]))
 
     if gps_barriers is None:
         ys = ac(x_tries, gp=gp, y_max=y_max)
@@ -94,11 +95,12 @@ def acq_max(ac, gp, y_max, bounds, random_state, n_warmup=10000, n_iter=10, data
     if debug: print("Best point on initial grid is ac({}) = {}".format(x_max, max_acq))
 
     # Explore the parameter space more throughly
-    if gps_barriers is None:
+    if bounds is not None:
         x_seeds = random_state.uniform(bounds[:, 0], bounds[:, 1],
                                    size=(n_iter, bounds.shape[0]))
     else:
-        _ , x_seeds = space.random_points(size=n_iter)
+        x_seeds = random_state.uniform(-1000, 1000,
+                                   size=(n_iter, bounds.shape[0]))
 
     if debug: print("Calling minimize() with", len(x_seeds), "different starting seeds")
 
@@ -357,6 +359,7 @@ class UtilityFunction(object):
         """Expected Barrier"""
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
+            #print(x)
             mean = gp.predict(x)
         act = -mean
 
@@ -364,12 +367,12 @@ class UtilityFunction(object):
         if not static_lambda:
             lam = 1/(std**2)
 
-        for i in len(gps):
+        for i in range(len(gps)):
             # Compute mean and std for every gp
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 mean , std = gps[i].predict(x,return_std=True)
-            act = act + 1/lam*(np.log(-mean) + std**2/(2*mean**2))
+            act = act + 1/lam*(np.log(np.abs(mean)) + std**2/(2*mean**2))
         return act
 
 
@@ -386,12 +389,12 @@ class UtilityFunction(object):
             lam = 1/(std**2)
 
 
-        for i in len(gps):
+        for i in range(len(gps)):
             # Compute mean and std for every gp
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 mean , std = gps[i].predict(x,return_std=True)
-            act = act + 1/lam*(np.log(-mean) + std**2/(2*mean**2))
+            act = act + 1/lam*(np.log(np.abs(mean)) + std**2/(2*mean**2))
         return act
 
 

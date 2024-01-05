@@ -40,8 +40,8 @@ class TargetSpace(object):
         if pbounds is None and barrier_func is None:
             raise ValueError("pbounds or barrier_func must be specified")
         
-        if pbounds is not None and barrier_func is not None:
-            raise ValueError("Cannot initialize both pbounds and barrier_func")
+        # if pbounds is not None and barrier_func is not None:
+        #     raise ValueError("Cannot initialize both pbounds and barrier_func")
 
         self._debug = debug
 
@@ -63,8 +63,10 @@ class TargetSpace(object):
             # parameters will output an ordered dictionary like this:
             # OrderedDict([('a', <Parameter "a = 5">), ('b', <Parameter "b=10">),...
             # we are only interested in the keys here:
-            self._keys =  parameters.keys()
-            self._bounds = None
+            self._keys =  list(parameters.keys())
+            if pbounds is None:
+                self._bounds = None
+            
 
 
             
@@ -362,10 +364,10 @@ class TargetSpace(object):
                 for col, (lower, upper) in enumerate(self._bounds):
                     data.T[col] = self.random_state.uniform(lower, upper, size=size)
                 if self._debug: print("Uniform randomly sampled point: value {}".format(data))
-            if self.barrier_func is not None:
+            else:
                 idx = None
                 data = np.empty((1,self.dim))
-                for col in range(len(self.barrier_func)):
+                for col in range(self.dim):
                     data.T[col] = self.random_state(lower = -1000, upper = 1000, size = size)
                 if self._debug: print("Uniform randomly sampled point: value {}".format(data))
         return idx, self.array_to_params(data.ravel())
