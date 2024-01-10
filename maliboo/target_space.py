@@ -270,7 +270,7 @@ class TargetSpace(object):
         self._optimization_info = pd.concat((self._optimization_info, info_new))
         if self._debug: print("Registered optimization information:", info_new, sep="\n")
 
-    def probe_barriers(self, params, idx = None):
+    def probe_barriers(self, params, idx = None,register = True):
         '''
         Evaluates the barrier functions on a single point x and records them as observations
                 Parameters
@@ -292,6 +292,9 @@ class TargetSpace(object):
         params = dict(zip(self._keys, x))
         evaluations = [self._barrier_functions[i](**params) for i in range(len(self._barrier_functions))]
         target_barriers = np.array(evaluations)
+
+        if not register:
+            return target_barriers
         target_barriers_values = self.register_barriers(target_barriers)
 
         if self._debug: print("Probed barrier_target values:", target_barriers_values)

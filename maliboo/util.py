@@ -372,7 +372,10 @@ class UtilityFunction(object):
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 mean , std = gps[i].predict(x,return_std=True)
-            act = act + 1/lam*(np.log(np.abs(mean)) + std**2/(2*mean**2))
+                log_mean = mean.copy()
+                log_mean[log_mean >= 0] = -1e-16
+            
+            act = act + 1/lam*(np.log(-log_mean) + std**2/(2*mean**2))
         return act
 
 
@@ -394,7 +397,10 @@ class UtilityFunction(object):
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 mean , std = gps[i].predict(x,return_std=True)
-            act = act + 1/lam*(np.log(np.abs(mean)) + std**2/(2*mean**2))
+                mean[mean>=0] = -1e-16
+                
+            act = act + 1/lam*(np.log(-mean) + std**2/(2*mean**2))
+        
         return act
 
 

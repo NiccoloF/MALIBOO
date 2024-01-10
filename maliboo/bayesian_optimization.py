@@ -295,9 +295,14 @@ class BayesianOptimization(Observable):
             init_points = max(init_points, 1)
 
         if self._debug: print("_prime_queue(): initializing", init_points, "random points")
-
         for _ in range(init_points):
-            idx, x_init = self._space.random_sample()
+            check = False
+            while not check:
+                idx, x_init = self._space.random_sample()
+                if np.all(self._space.probe_barriers(x_init,register=False)<=0):
+                    check = True
+                    
+            
             self._queue.put((idx, x_init))
             if self.dataset is not None:
                 self.update_memory_queue(self.dataset[self._space.keys],
