@@ -40,8 +40,8 @@ class TargetSpace(object):
         if pbounds is None and barrier_func is None:
             raise ValueError("pbounds or barrier_func must be specified")
         
-        if pbounds is not None and barrier_func is not None:
-            raise ValueError("Cannot initialize both pbounds and barrier_func")
+        # if pbounds is not None and barrier_func is not None:
+        #     raise ValueError("Cannot initialize both pbounds and barrier_func")
 
         self._debug = debug
 
@@ -63,8 +63,8 @@ class TargetSpace(object):
             # parameters will output an ordered dictionary like this:
             # OrderedDict([('a', <Parameter "a = 5">), ('b', <Parameter "b=10">),...
             # we are only interested in the keys here:
-            self._keys =  parameters.keys()
-            self._bounds = None
+            self._keys =  list(parameters.keys())
+            # self._bounds = None
 
 
             
@@ -96,12 +96,16 @@ class TargetSpace(object):
 
         if self._debug: print("TargetSpace initialization completed")
 
+        self.in_constraint = list()
 
     def __len__(self):
         assert len(self._params) == len(self._target)
         return len(self._target)
 
-
+    # @property
+    # def in_constraint(self):
+    #     return self.in_constraint
+    
     @property
     def empty(self):
         return len(self) == 0
@@ -126,8 +130,8 @@ class TargetSpace(object):
     def bounds(self):
         if self._bounds is not None:
             return self._bounds
-        else:
-            raise ValueError("bounds are defined only when using pbounds")
+        # else:
+        #     raise ValueError("bounds are defined only when using pbounds")
 
     @property
     def dataset(self):
@@ -362,26 +366,39 @@ class TargetSpace(object):
                 for col, (lower, upper) in enumerate(self._bounds):
                     data.T[col] = self.random_state.uniform(lower, upper, size=size)
                 if self._debug: print("Uniform randomly sampled point: value {}".format(data))
-            if self.barrier_func is not None:
+            else:
                 idx = None
                 data = np.empty((1,self.dim))
                 for col in range(len(self.barrier_func)):
-                    data.T[col] = self.random_state(lower = -1000, upper = 1000, size = size)
+                    data.T[col] = self.random_state.uniform(-1000,1000, size = size)
                 if self._debug: print("Uniform randomly sampled point: value {}".format(data))
         return idx, self.array_to_params(data.ravel())
 
 
     def max(self):
         """Get maximum target value found and corresponding parameters."""
-        try:
-            res = {
-                'target': self.target.max(),
-                'params': dict(
-                    zip(self.keys, self.params.values[self.target.argmax()])
-                )
-            }
-        except ValueError:
-            res = {}
+        if self.barrier_func is None:
+            try:
+                res = {
+                    'target': self.target.max(),
+                    'params': dict(
+                        zip(self.keys, self.params.values[self.target.argmax()])
+                    )
+                }
+            except ValueError:
+                res = {}
+        else:
+            correct_idxs = np.array(self.in_constraint)
+            target_checked = self.target[correct_idxs]
+            try:
+                res = {
+                    'target': target_checked.max(),
+                    'params': dict(
+                        zip(self.keys, self.params.values[target_checked.argmax()])
+                    )
+                }
+            except ValueError:
+                res = {}            
         return res
 
 

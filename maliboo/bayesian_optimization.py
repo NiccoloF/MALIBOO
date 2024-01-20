@@ -466,6 +466,11 @@ class BayesianOptimization(Observable):
                     target_value = self.probe(x_probe, idx=idx, lazy=False)
                 else:
                     target_value , target_value_barrier = self.probe(x_probe, idx=idx, lazy=False)
+                    if not np.all(target_value_barrier <= 0):
+                        self._space.in_constraint.append(False)
+                    else:
+                        self._space.in_constraint.append(True)
+                        
             else:
                 # Dataset for both X and y: register point entirely from dataset without probe()
                 if self._debug: print("Dataset Xy: registering dataset point")
