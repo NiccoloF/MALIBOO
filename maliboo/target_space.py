@@ -66,7 +66,7 @@ class TargetSpace(object):
             self._keys =  list(parameters.keys())
             # self._bounds = None
 
-
+        self.x_grid = None
             
         if barrier_func is not None:
             self.barrier_func = barrier_func
@@ -167,6 +167,21 @@ class TargetSpace(object):
         else:
             raise ValueError("target_barriers not defined")
         
+    def create_grid(self, n_warmup):
+            
+        x_grid = [np.linspace(bound[0],bound[1], n_warmup) for bound in self.bounds]
+        x_mesh = np.array(np.meshgrid(*x_grid)).reshape(-1,self.bounds.shape[0])
+        self.x_grid = x_mesh
+    
+    def update_indexes(self, ac, gp, y_max, gps_barriers):
+
+        gp_barrier_evaluations = ac(self.x_grid, gp=gp, y_max=y_max, gps = gps_barriers)
+        col_mask = np.where(np.isnan(gp_barrier_evaluations),False,True)
+        self.best_indexes = np.where(col_mask == True)
+    
+    def random_best_point(self):
+        idx = np.random.choice(self.best_indexes[0])
+        return self.x_grid[idx,:]
 
 
     def params_to_array(self, params):
@@ -390,11 +405,12 @@ class TargetSpace(object):
         else:
             correct_idxs = np.array(self.in_constraint)
             target_checked = self.target[correct_idxs]
+            params_checked = self.params.values[correct_idxs]
             try:
                 res = {
                     'target': target_checked.max(),
                     'params': dict(
-                        zip(self.keys, self.params.values[target_checked.argmax()])
+                        zip(self.keys, params_checked[target_checked.argmax()])
                     )
                 }
             except ValueError:

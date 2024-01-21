@@ -4,7 +4,7 @@ from scipy.stats import norm
 from scipy.optimize import minimize
 
 
-def acq_max(ac, gp, y_max, bounds, random_state, n_warmup=10000, n_iter=10, dataset=None,
+def acq_max(ac, gp, y_max, bounds, random_state, n_warmup=10, n_iter=5, dataset=None,
             gps_barriers=None, space = None, debug=False):
     """
     A function to find the maximum of the acquisition function
@@ -94,44 +94,30 @@ def acq_max(ac, gp, y_max, bounds, random_state, n_warmup=10000, n_iter=10, data
     # if debug: print("Best point on initial grid is ac({}) = {}".format(x_max, max_acq))
 
     # Explore the parameter space more throughly
-    if gps_barriers is None:
-        x_init = random_state.uniform(bounds[:, 0], bounds[:, 1],
-                                   size=(1, bounds.shape[0]))
-
-   # x_init = space._as_array(0)
-    # if debug: print("Calling minimize() with", x_init)
-    # max_acq = ac(x_init.reshape(1,-1), gp=gp, y_max=y_max, gps = gps_barriers)
+    if space.x_grid is None:
+        space.create_grid(n_warmup=n_warmup)
+        space.update_indexes(ac = ac, gp = gp, y_max= y_max, gps_barriers= gps_barriers)
+    
+    x_init = space.random_best_point()
     for _ in range(n_iter):
         # Find the minimum of minus the acquisition function
         if gps_barriers is None:
             res = minimize(lambda x: ac(x.reshape(1, -1), gp=gp, y_max=y_max, gps = gps_barriers),
                            x_init,
-                         bounds=[(-1000,1000)]
+                         bounds= bounds
                            ) # deleted .reshape(1, -1) and it works (idk why))
         else:
 
-            check_init = False
-            check_minimize = False
-            while not check_init:
-                _ , x_init = space.random_sample()
-                x_init = space._as_array(x_init)
-                if not np.isnan(ac(x_init.reshape(1,-1), gp=gp, y_max=y_max, gps=gps_barriers)):
-                    check_init = True
-            while not check_minimize:
+            for i in range(10):
                 res = minimize(lambda x: ac(x.reshape(1, -1), gp=gp, y_max=y_max, gps = gps_barriers),
                         x_init,
                         bounds=bounds
                            ) # deleted .reshape(1, -1) and it works (idk why))
-                if not np.isnan(res.fun):
-                    check_minimize = 1
-                check_init = False
-                while not check_init:
-                    _ , x_init = space.random_sample()
-                    x_init = space._as_array(x_init)
-                    if not np.isnan(ac(x_init.reshape(1,-1), gp=gp, y_max=y_max, gps=gps_barriers)):
-                        check_init = True
+                if not np.any(np.isnan(res.fun)):
+                    break
+                space.update_indexes(ac = ac, gp = gp, y_max= y_max, gps_barriers= gps_barriers)
+                x_init = space.random_best_point()
                 
-        print(res.fun)
         # See if success
         # if not res.success:
         #     continue
@@ -139,7 +125,7 @@ def acq_max(ac, gp, y_max, bounds, random_state, n_warmup=10000, n_iter=10, data
         # if max_acq is None or -np.squeeze(res.fun) >= max_acq:
         #     x_max = res.x
         #     max_acq = -np.squeeze(res.fun)
-        x_max = [res.fun]
+    x_max = (res.x).reshape(-1,1)
     max_acq = -np.squeeze(res.fun)
     if debug: print("End of acq_max(): maximizer of utility is ac({}) = {}".format(x_max, max_acq))
 
@@ -149,6 +135,40 @@ def acq_max(ac, gp, y_max, bounds, random_state, n_warmup=10000, n_iter=10, data
         return np.clip(x_max, bounds[:, 0], bounds[:, 1]), None, max_acq
     else:
         return x_max, None, max_acq
+    
+
+
+def get_most_promising_start(ac, gp, y_max, bounds, random_state, n_warmup=100,
+            gps_barriers=None, space = None):
+    
+    # if gps_barriers is None it is sufficient to find the first approximation of the maximum point inside the bounds
+    
+    if gps_barriers is None:
+        x_tries = random_state.uniform(bounds[:, 0], bounds[:, 1],
+                                        size=(n_warmup, bounds.shape[0]))
+        ys = -ac(x_tries, gp=gp, y_max=y_max)
+        idx = ys.argmax()
+        x_max = x_tries[idx]
+        return x_max
+    
+    # if gps_barriers is not None we have also to check that the acquisition function is defined
+
+    if gps_barriers is not None:
+        
+        x_grid = [np.linspace(bound[0],bound[1], n_warmup) for bound in bounds]
+        x_mesh = np.array(np.meshgrid(*x_grid)).reshape(-1,bounds.shape[0])
+        gp_barrier_evaluations = ac(x_mesh, gp=gp, y_max=y_max, gps = gps_barriers)
+        col_mask = np.where(np.isnan(gp_barrier_evaluations),False,True)
+        x_tries = (x_mesh[col_mask,:])
+        #x_tries = x_tries.reshape(n_warmup, bounds.shape[0])
+        ys = gp_barrier_evaluations[col_mask]
+        idx = ys.argmin()
+        x_min = x_tries[idx,:]
+        return x_min
+            
+
+
+
 
 
 class UtilityFunction(object):
@@ -380,14 +400,14 @@ class UtilityFunction(object):
 
         # bool to specify lambda fixed or not
         if not static_lambda:
-            lam = 1/stdf**2
+            lam = stdf**2
 
         for i in range(len(gps)):
             # Compute mean and std for every gp
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 mean , std = gps[i].predict(x,return_std=True)
-            act = act + 1/lam*(np.log(-mean) - std**2/(2*mean**2))
+            act = act - lam*(np.log(-mean) - std**2/(2*mean**2))
         return act
 
 
