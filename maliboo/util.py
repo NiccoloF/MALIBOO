@@ -4,7 +4,7 @@ from scipy.stats import norm
 from scipy.optimize import minimize
 
 
-def acq_max(ac, gp, y_max, bounds, random_state, n_warmup=10, n_iter=5, dataset=None,
+def acq_max(ac, gp, y_max, bounds, random_state, n_warmup=100, n_iter=5, dataset=None,
             gps_barriers=None, space = None, debug=False):
     """
     A function to find the maximum of the acquisition function
@@ -94,6 +94,7 @@ def acq_max(ac, gp, y_max, bounds, random_state, n_warmup=10, n_iter=5, dataset=
     # if debug: print("Best point on initial grid is ac({}) = {}".format(x_max, max_acq))
 
     # Explore the parameter space more throughly
+    max_acq = None
     if space.x_grid is None:
         space.create_grid(n_warmup=n_warmup)
         space.update_indexes(ac = ac, gp = gp, y_max= y_max, gps_barriers= gps_barriers)
@@ -117,16 +118,12 @@ def acq_max(ac, gp, y_max, bounds, random_state, n_warmup=10, n_iter=5, dataset=
                     break
                 space.update_indexes(ac = ac, gp = gp, y_max= y_max, gps_barriers= gps_barriers)
                 x_init = space.random_best_point()
-                
-        # See if success
-        # if not res.success:
-        #     continue
-        # Store it if better than previous minimum(maximum).
-        # if max_acq is None or -np.squeeze(res.fun) >= max_acq:
-        #     x_max = res.x
-        #     max_acq = -np.squeeze(res.fun)
-    x_max = (res.x).reshape(-1,1)
-    max_acq = -np.squeeze(res.fun)
+                # Store it if better than previous minimum(maximum).
+
+        if max_acq is None or -np.squeeze(res.fun) >= max_acq:
+            x_max = (res.x).reshape(-1,1)
+            max_acq = -np.squeeze(res.fun)
+
     if debug: print("End of acq_max(): maximizer of utility is ac({}) = {}".format(x_max, max_acq))
 
     # Clip output to make sure it lies within the bounds. Due to floating
