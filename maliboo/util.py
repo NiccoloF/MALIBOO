@@ -97,29 +97,23 @@ def acq_max(ac, gp, y_max, bounds, random_state, n_warmup=100, n_iter=5, dataset
     max_acq = None
     if space.x_grid is None:
         space.create_grid(n_warmup=n_warmup)
-        space.update_indexes(ac = ac, gp = gp, y_max= y_max, gps_barriers= gps_barriers)
-    
-    x_init = space.random_best_point()
+        
+    space.update_indexes(ac = ac, gp = gp, y_max= y_max, gps_barriers= gps_barriers)
     for _ in range(n_iter):
+        x_init = space.random_best_point()
         # Find the minimum of minus the acquisition function
         if gps_barriers is None:
             res = minimize(lambda x: ac(x.reshape(1, -1), gp=gp, y_max=y_max, gps = gps_barriers),
                            x_init,
-                         bounds= bounds
+                           bounds= bounds
                            ) # deleted .reshape(1, -1) and it works (idk why))
         else:
-
-            for i in range(10):
-                res = minimize(lambda x: ac(x.reshape(1, -1), gp=gp, y_max=y_max, gps = gps_barriers),
-                        x_init,
-                        bounds=bounds
-                           ) # deleted .reshape(1, -1) and it works (idk why))
-                if not np.any(np.isnan(res.fun)):
-                    break
-                space.update_indexes(ac = ac, gp = gp, y_max= y_max, gps_barriers= gps_barriers)
-                x_init = space.random_best_point()
-                # Store it if better than previous minimum(maximum).
-
+            res = minimize(lambda x: ac(x.reshape(1, -1), gp=gp, y_max=y_max, gps = gps_barriers),
+                    x_init,
+                    bounds=bounds
+                        ) # deleted .reshape(1, -1) and it works (idk why))
+                
+        # Store it if better than previous minimum(maximum).
         if max_acq is None or -np.squeeze(res.fun) >= max_acq:
             x_max = (res.x).reshape(-1,1)
             max_acq = -np.squeeze(res.fun)
@@ -397,14 +391,15 @@ class UtilityFunction(object):
 
         # bool to specify lambda fixed or not
         if not static_lambda:
-            lam = stdf**2
+            #lam = stdf**2
+            lam = 1
 
         for i in range(len(gps)):
             # Compute mean and std for every gp
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 mean , std = gps[i].predict(x,return_std=True)
-            act = act - lam*(np.log(-mean) - std**2/(2*mean**2))
+            act = act - lam*(np.where(mean < 0,np.log(-mean+1),-np.exp(mean) + 1) - std**2/(2*mean**2))
         return act
 
 
