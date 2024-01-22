@@ -391,15 +391,16 @@ class UtilityFunction(object):
 
         # bool to specify lambda fixed or not
         if not static_lambda:
-            #lam = stdf**2
-            lam = 1
+            lam = stdf**2
+            # lam = 100000
 
         for i in range(len(gps)):
             # Compute mean and std for every gp
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 mean , std = gps[i].predict(x,return_std=True)
-            act = act - lam*(np.where(mean < 0,np.log(-mean+1),-np.exp(mean) + 1) - std**2/(2*mean**2))
+            # act = act - lam*(np.where(mean < 0,np.log(-mean+1),-np.exp(mean) + 1) - std**2/(2*mean**2))
+            act = act - lam*(np.where(mean > -1e-6),-1e10,np.log(-mean)) - std**2/(2*mean**2))
         return act
 
 
