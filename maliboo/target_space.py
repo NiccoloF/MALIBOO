@@ -38,10 +38,8 @@ class TargetSpace(object):
     def __init__(self, target_func=None, pbounds=None, random_state=None,
                  dataset=None, target_column=None, barrier_func = None, debug=False):
         if pbounds is None and barrier_func is None:
-            raise ValueError("pbounds or barrier_func must be specified")
-        
-        # if pbounds is not None and barrier_func is not None:
-        #     raise ValueError("Cannot initialize both pbounds and barrier_func")
+            raise ValueError("pbounds must be specified")
+    
 
         self._debug = debug
 
@@ -85,10 +83,12 @@ class TargetSpace(object):
         self._params = pd.DataFrame()
         self._target = np.empty(shape=(0))
         if self.barrier_func is not None:
+
             '''
             barrier_targets will contain the evaluation of the barrier functions, in particular
             a matrix of shape (n_evaluations, n_constraints)
             '''
+
             self._barrier_targets = np.empty(shape = (0,len(self.barrier_func)))
         # Other information to be recorded
         self._target_dict_info = pd.DataFrame()
@@ -97,14 +97,19 @@ class TargetSpace(object):
         if self._debug: print("TargetSpace initialization completed")
 
         self.in_constraint = list()
+        self.n_warmup = 100
+        self.n_iter = 5
 
     def __len__(self):
         assert len(self._params) == len(self._target)
         return len(self._target)
+    
+    def set_grid_dimension(self,n):
+        self.n_warmup = n
+    
+    def set_n_iter(self,iters):
+        self.n_iter = iters
 
-    # @property
-    # def in_constraint(self):
-    #     return self.in_constraint
     
     @property
     def empty(self):
@@ -128,10 +133,7 @@ class TargetSpace(object):
 
     @property
     def bounds(self):
-        if self._bounds is not None:
-            return self._bounds
-        # else:
-        #     raise ValueError("bounds are defined only when using pbounds")
+        return self._bounds
 
     @property
     def dataset(self):
@@ -179,8 +181,8 @@ class TargetSpace(object):
         col_mask = np.where(np.isnan(gp_barrier_evaluations),False,True)
         self.best_indexes = np.where(col_mask == True)
     
-    def random_best_point(self):
-        idx = np.random.choice(self.best_indexes[0])
+    def random_best_point(self, random_state):
+        idx = random_state.choice(self.best_indexes[0])
         return self.x_grid[idx,:]
 
 

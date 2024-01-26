@@ -275,7 +275,9 @@ class BayesianOptimization(Observable):
             dataset=dataset_acq,
             gps_barriers=self._gps_barriers,
             space=self._space,
-            debug=self._debug
+            debug=self._debug,
+            n_warmup= self._space.n_warmup,
+            n_iter = self._space.n_iter
         )
 
         if self.relaxation:

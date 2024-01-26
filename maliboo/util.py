@@ -6,12 +6,26 @@ from scipy.optimize import minimize
 
 def acq_max(ac, gp, y_max, bounds, random_state, n_warmup=100, n_iter=5, dataset=None,
             gps_barriers=None, space = None, debug=False):
-    """
-    A function to find the maximum of the acquisition function
+    if gps_barriers is None:
+        x_max, _ , max_acq = acq_max_no_barriers(ac = ac, gp = gp, y_max = y_max, bounds = bounds, random_state = random_state,
+                                                n_warmup=n_warmup, n_iter=n_iter, dataset=dataset, gps_barriers=gps_barriers,
+                                                space = space, debug=debug)
+    else:
+        x_max, _ , max_acq = acq_max_barriers(ac = ac, gp = gp, y_max = y_max, bounds = bounds, random_state = random_state,
+                                                n_warmup=n_warmup, n_iter=n_iter, dataset=dataset, gps_barriers=gps_barriers,
+                                                space = space, debug=debug)
+        
+    return x_max, None, max_acq        
 
-    It uses a combination of random sampling (cheap) and the 'L-BFGS-B'
-    optimization method. First by sampling `n_warmup` (1e5) points at random,
-    and then running L-BFGS-B from `n_iter` (250) random starting points.
+    
+def acq_max_barriers(ac, gp, y_max, bounds, random_state, n_warmup=100, n_iter=5, dataset=None,
+            gps_barriers=None, space = None, debug=False):
+    """
+    A function to find the maximum of the acquisition function in case of barrier functions.
+    A starting feasible point is found in a meshgrid with pbounds dimensions.
+    In the meshgrid the feasible starting points are stored using indexes of the grid in TargetSpace.
+    The initial point is chosen randomly between the feasible indexes, if the minimization results in an insuccess it means that the
+    indexes are no longer valid, thus should be updated.
 
     Parameters
     ----------
@@ -59,60 +73,19 @@ def acq_max(ac, gp, y_max, bounds, random_state, n_warmup=100, n_iter=5, dataset
     max_acq: float
         The computed maximum of the acquisition function, namely ac(x_max)
     """
-    # # Warm up with random points or dataset points
-    # if debug: print("Starting acq_max()\nIncumbent target: y_max =", y_max)
-    # if dataset is not None:
-    #     if debug: print("Dataset passed to initial grid has shape", dataset.shape)
-    #     x_tries = dataset.values
-    # else:
-    #     if debug: print("No dataset, initial grid will be random with shape {}".format((n_warmup, bounds.shape[0])))
-    #     # Generate random points
-    #     if gps_barriers is None:
-    #         x_tries = random_state.uniform(bounds[:, 0], bounds[:, 1],
-    #                                    size=(n_warmup, bounds.shape[0]))
-    #     else:
-    #         _ , x_tries = space.random_points(size=n_warmup)
 
-    # if gps_barriers is None:
-    #     ys = ac(x_tries, gp=gp, y_max=y_max)
-    # else:
-    #     ys = ac(x_tries, gp=gp, y_max=y_max, gps=gps_barriers)
-
-    # if debug: print("Acquisition evaluated successfully on grid")
-    # idx = ys.argmax()  # this index is relative to the local x_tries values matrix
-    # x_max = x_tries[idx]
-    # if debug: print("Grid index idx =", idx)
-
-    # if dataset is not None:
-    #     max_acq = ys[idx]
-    #     # idx becomes the true dataset index of the selected point, rather than being relative to x_tries
-    #     idx = dataset.index[idx]
-    #     if debug: print("End of acq_max(): maximizer of utility is x = data[{}] = {}, with ac(x) = {}".format(idx, x_max, max_acq))
-    #     return x_max, idx, max_acq
-
-    # max_acq = ys[idx]
-    # if debug: print("Best point on initial grid is ac({}) = {}".format(x_max, max_acq))
-
-    # Explore the parameter space more throughly
     max_acq = None
     if space.x_grid is None:
         space.create_grid(n_warmup=n_warmup)
-        
-    space.update_indexes(ac = ac, gp = gp, y_max= y_max, gps_barriers= gps_barriers)
+        space.update_indexes(ac = ac, gp = gp, y_max= y_max, gps_barriers= gps_barriers)
+
     for _ in range(n_iter):
-        x_init = space.random_best_point()
+        x_init = space.random_best_point(random_state = random_state)
         # Find the minimum of minus the acquisition function
-        if gps_barriers is None:
-            res = minimize(lambda x: ac(x.reshape(1, -1), gp=gp, y_max=y_max, gps = gps_barriers),
-                           x_init,
-                           bounds= bounds
-                           ) # deleted .reshape(1, -1) and it works (idk why))
-        else:
-            res = minimize(lambda x: ac(x.reshape(1, -1), gp=gp, y_max=y_max, gps = gps_barriers),
-                    x_init,
-                    bounds=bounds
-                        ) # deleted .reshape(1, -1) and it works (idk why))
-                
+        res = minimize(lambda x: ac(x.reshape(1, -1), gp=gp, y_max=y_max, gps = gps_barriers),
+                    x_init,bounds=bounds) 
+        if not res.success:
+            space.update_indexes(ac = ac, gp = gp, y_max= y_max, gps_barriers= gps_barriers)
         # Store it if better than previous minimum(maximum).
         if max_acq is None or -np.squeeze(res.fun) >= max_acq:
             x_max = (res.x).reshape(-1,1)
@@ -126,40 +99,109 @@ def acq_max(ac, gp, y_max, bounds, random_state, n_warmup=100, n_iter=5, dataset
         return np.clip(x_max, bounds[:, 0], bounds[:, 1]), None, max_acq
     else:
         return x_max, None, max_acq
-    
 
 
-def get_most_promising_start(ac, gp, y_max, bounds, random_state, n_warmup=100,
-            gps_barriers=None, space = None):
-    
-    # if gps_barriers is None it is sufficient to find the first approximation of the maximum point inside the bounds
-    
-    if gps_barriers is None:
+def acq_max_no_barriers(ac, gp, y_max, bounds, random_state, n_warmup=100, n_iter=5, dataset=None,
+            gps_barriers=None, space = None, debug=False):
+    """
+        A function to find the maximum of the acquisition function when not using barrier functions
+
+        It uses a combination of random sampling (cheap) and the 'L-BFGS-B'
+        optimization method. First by sampling `n_warmup` (1e5) points at random,
+        and then running L-BFGS-B from `n_iter` (250) random starting points.
+
+        Parameters
+        ----------
+        ac: function
+            The acquisition function object that return its point-wise value
+
+        gp: sklearn.gaussian_process.GaussianProcessRegressor object
+            A gaussian process fitted to the relevant data
+
+        y_max: float
+            The current maximum known (aka incumbent) value of the target function
+
+        bounds: dict
+            The variables bounds to limit the search of the acq max
+
+        random_state: numpy.RandomState object
+            Instance of a random number generator
+
+        n_warmup: int, optional (default=10000)
+            Number of times to randomly sample the aquisition function
+
+        n_iter: int, optional (default=10)
+            Number of times to run scipy.minimize
+
+        dataset: pandas.DataFrame, optional (default=None)
+            The (possibly reduced) domain dataset, if any, on which the maximum is to be found
+
+        debug: bool, optional (default=False)
+            Whether or not to print detailed debugging information
+
+        Returns
+        -------
+        x_max: numpy.ndarray
+            The arg max of the acquisition function
+
+        idx: int or None
+            The dataset index of the arg max of the acquisition function, or None if no dataset is being used
+
+        max_acq: float
+            The computed maximum of the acquisition function, namely ac(x_max)
+    """
+
+    # Warm up with random points or dataset points
+    if debug: print("Starting acq_max()\nIncumbent target: y_max =", y_max)
+    if dataset is not None:
+        if debug: print("Dataset passed to initial grid has shape", dataset.shape)
+        x_tries = dataset.values
+    else:
+        if debug: print("No dataset, initial grid will be random with shape {}".format((n_warmup, bounds.shape[0])))
         x_tries = random_state.uniform(bounds[:, 0], bounds[:, 1],
-                                        size=(n_warmup, bounds.shape[0]))
-        ys = -ac(x_tries, gp=gp, y_max=y_max)
-        idx = ys.argmax()
-        x_max = x_tries[idx]
-        return x_max
-    
-    # if gps_barriers is not None we have also to check that the acquisition function is defined
+                                       size=(n_warmup, bounds.shape[0]))
+    ys = ac(x_tries, gp=gp, y_max=y_max)
+    if debug: print("Acquisition evaluated successfully on grid")
+    idx = ys.argmax()  # this index is relative to the local x_tries values matrix
+    x_max = x_tries[idx]
+    if debug: print("Grid index idx =", idx)
 
-    if gps_barriers is not None:
-        
-        x_grid = [np.linspace(bound[0],bound[1], n_warmup) for bound in bounds]
-        x_mesh = np.array(np.meshgrid(*x_grid)).reshape(-1,bounds.shape[0])
-        gp_barrier_evaluations = ac(x_mesh, gp=gp, y_max=y_max, gps = gps_barriers)
-        col_mask = np.where(np.isnan(gp_barrier_evaluations),False,True)
-        x_tries = (x_mesh[col_mask,:])
-        #x_tries = x_tries.reshape(n_warmup, bounds.shape[0])
-        ys = gp_barrier_evaluations[col_mask]
-        idx = ys.argmin()
-        x_min = x_tries[idx,:]
-        return x_min
-            
+    if dataset is not None:
+        max_acq = ys[idx]
+        # idx becomes the true dataset index of the selected point, rather than being relative to x_tries
+        idx = dataset.index[idx]
+        if debug: print("End of acq_max(): maximizer of utility is x = data[{}] = {}, with ac(x) = {}".format(idx, x_max, max_acq))
+        return x_max, idx, max_acq
 
+    max_acq = ys[idx]
+    if debug: print("Best point on initial grid is ac({}) = {}".format(x_max, max_acq))
 
+    # Explore the parameter space more throughly
+    x_seeds = random_state.uniform(bounds[:, 0], bounds[:, 1],
+                                   size=(n_iter, bounds.shape[0]))
 
+    if debug: print("Calling minimize() with", len(x_seeds), "different starting seeds")
+
+    for x_try in x_seeds:
+        # Find the minimum of minus the acquisition function
+        res = minimize(lambda x: -ac(x.reshape(1, -1), gp=gp, y_max=y_max),
+                       x_try.reshape(1, -1),
+                       bounds=bounds,
+                       method="L-BFGS-B")
+
+        # See if success
+        if not res.success:
+            continue
+        # Store it if better than previous minimum(maximum).
+        if max_acq is None or -np.squeeze(res.fun) >= max_acq:
+            x_max = res.x
+            max_acq = -np.squeeze(res.fun)
+
+    if debug: print("End of acq_max(): maximizer of utility is ac({}) = {}".format(x_max, max_acq))
+
+    # Clip output to make sure it lies within the bounds. Due to floating
+    # point technicalities this is not always the case.
+    return np.clip(x_max, bounds[:, 0], bounds[:, 1]), None, max_acq
 
 
 class UtilityFunction(object):
@@ -218,7 +260,8 @@ class UtilityFunction(object):
 
         # For Expected Improvement with Constraints-based acquisitions
         if 'eic' in kind:
-            self.set_acq_info_field(acq_info, 'eic_bounds')
+            if kind != 'eic_bm':
+                self.set_acq_info_field(acq_info, 'eic_bounds')
 
             # Check for other needed fields, and provide default values if not present
             if 'eic_P_func' not in acq_info:
@@ -392,37 +435,37 @@ class UtilityFunction(object):
         # bool to specify lambda fixed or not
         if not static_lambda:
             lam = stdf**2
-            # lam = 100000
 
         for i in range(len(gps)):
             # Compute mean and std for every gp
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 mean , std = gps[i].predict(x,return_std=True)
-            # act = act - lam*(np.where(mean < 0,np.log(-mean+1),-np.exp(mean) + 1) - std**2/(2*mean**2))
-            act = act - lam*(np.where(mean > -1e-6),-1e10,np.log(-mean)) - std**2/(2*mean**2))
+            act = act - lam*(np.where(mean > -1e-5,-1e10,np.log(-mean)) - std**2/(2*mean**2))
         return act
 
 
     @staticmethod
     def _eic_bm(x,gp,y_max,gps,static_lambda,lam = 0.1):
+
         """Expected Improvement Constrained with Barrier Method"""
+
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            mean , std = gp.predict(x,return_std=True)
-        act = (y_max-mean)*norm.cdf((y_max-mean)/std) + std*norm.cdf((y_max-mean)/std)
+            mean , stdf = gp.predict(x,return_std=True)
+        act = (y_max-mean)*norm.cdf((y_max-mean)/stdf) + stdf*norm.cdf((y_max-mean)/stdf)
 
         # bool to specify lambda fixed or not
         if not static_lambda:
-            lam = 1/(std**2)
+            lam = (stdf**2)
 
 
-        for i in len(gps):
+        for i in range(len(gps)):
             # Compute mean and std for every gp
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 mean , std = gps[i].predict(x,return_std=True)
-            act = act + 1/lam*(np.log(-mean) - std**2/(2*mean**2))
+            act = act - lam*(np.where(mean > -1e-5,-1e10,np.log(-mean)) - std**2/(2*mean**2))
         return act
 
 
