@@ -120,6 +120,14 @@ class BayesianOptimization(Observable):
                                 'DomainTransformer')
 
         # Internal GP regressor
+        self.initialize_gp()
+
+        super(BayesianOptimization, self).__init__(events=DEFAULT_EVENTS)
+
+        if self._debug: print("BayesianOptimization initialization completed")
+
+    def initialize_gp(self):
+
         self._gp = GaussianProcessRegressor(
             kernel=Matern(nu=2.5),
             alpha=1e-6,
@@ -137,17 +145,12 @@ class BayesianOptimization(Observable):
                 self._gps_barriers.append(GaussianProcessRegressor(
                     kernel=Matern(nu=2.5),
                     alpha=1e-6,
-                    normalize_y=True,
+                    normalize_y=False,
                     n_restarts_optimizer=5,
                     random_state=self._random_state,
                 ))
         else:
             self._gps_barriers = None
-
-        super(BayesianOptimization, self).__init__(events=DEFAULT_EVENTS)
-
-        if self._debug: print("BayesianOptimization initialization completed")
-
 
     @property
     def space(self):
@@ -241,6 +244,7 @@ class BayesianOptimization(Observable):
         # we don't really need to see them here.
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
+            self.initialize_gp()
             self._gp.fit(self._space.params, self._space.target) 
             # fit GPs for constraints
             if self._space.barrier_func is not None:
@@ -400,8 +404,10 @@ class BayesianOptimization(Observable):
         # Initialize other stuff
         self._prime_subscriptions()
         self.dispatch(Events.OPTIMIZATION_START)
+        self._space.init_LHS(init_points)
         self._prime_queue(init_points)
         self.set_gp_params(**gp_params)
+        
 
         util = UtilityFunction(kind=acq,
                                kappa=kappa,
@@ -520,9 +526,8 @@ class BayesianOptimization(Observable):
         self.save_res_to_csv(self._results_file)
         os.remove(self._results_file_tmp)
         print("Results successfully saved to " + self._output_path)
-        self.dispatch(Events.OPTIMIZATION_END)
-
-
+        self.dispatch(Events.OPTIMIZATION_END) 
+        
     def get_approximation(self, x_probe, dataset):
         """
         Finds a point in dataset which is the nearest to x_probe (wrt the Euclidean distance)

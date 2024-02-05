@@ -4,7 +4,7 @@ from scipy.stats import norm
 from scipy.optimize import minimize
 
 
-def acq_max(ac, gp, y_max, bounds, random_state, n_warmup=100, n_iter=5, dataset=None,
+def acq_max(ac, gp, y_max, bounds, random_state, n_warmup=500, n_iter=20, dataset=None,
             gps_barriers=None, space = None, debug=False):
     if gps_barriers is None:
         x_max, _ , max_acq = acq_max_no_barriers(ac = ac, gp = gp, y_max = y_max, bounds = bounds, random_state = random_state,
@@ -18,7 +18,7 @@ def acq_max(ac, gp, y_max, bounds, random_state, n_warmup=100, n_iter=5, dataset
     return x_max, None, max_acq        
 
     
-def acq_max_barriers(ac, gp, y_max, bounds, random_state, n_warmup=100, n_iter=5, dataset=None,
+def acq_max_barriers(ac, gp, y_max, bounds, random_state, n_warmup, n_iter, dataset=None,
             gps_barriers=None, space = None, debug=False):
     """
     A function to find the maximum of the acquisition function in case of barrier functions.
@@ -77,15 +77,27 @@ def acq_max_barriers(ac, gp, y_max, bounds, random_state, n_warmup=100, n_iter=5
     max_acq = None
     if space.x_grid is None:
         space.create_grid(n_warmup=n_warmup)
-        space.update_indexes(ac = ac, gp = gp, y_max= y_max, gps_barriers= gps_barriers)
-
+    space.update_indexes(ac = ac, gp = gp, y_max= y_max, gps_barriers= gps_barriers)
+    x_init = space.most_promising_point()
+    # Find the minimum of minus the acquisition function
+    res = minimize(lambda x: -ac(x.reshape(1, -1), gp=gp, y_max=y_max, gps = gps_barriers),
+                x_init,bounds=bounds)
+    
+    # Store it if better than previous minimum(maximum).
+    if max_acq is None or -np.squeeze(res.fun) >= max_acq:
+        x_max = (res.x).reshape(-1,1)
+        max_acq = -np.squeeze(res.fun)
+    choice = np.array([True,False])
+    greedy = space.random_state.choice(choice,1, p = [0.8,0.2])
+    if not greedy:
+        max_acq = None
+    
     for _ in range(n_iter):
         x_init = space.random_best_point(random_state = random_state)
         # Find the minimum of minus the acquisition function
-        res = minimize(lambda x: ac(x.reshape(1, -1), gp=gp, y_max=y_max, gps = gps_barriers),
-                    x_init,bounds=bounds) 
-        if not res.success:
-            space.update_indexes(ac = ac, gp = gp, y_max= y_max, gps_barriers= gps_barriers)
+        res = minimize(lambda x: -ac(x.reshape(1, -1), gp=gp, y_max=y_max, gps = gps_barriers),
+                    x_init,bounds=bounds)
+        
         # Store it if better than previous minimum(maximum).
         if max_acq is None or -np.squeeze(res.fun) >= max_acq:
             x_max = (res.x).reshape(-1,1)
@@ -101,7 +113,7 @@ def acq_max_barriers(ac, gp, y_max, bounds, random_state, n_warmup=100, n_iter=5
         return x_max, None, max_acq
 
 
-def acq_max_no_barriers(ac, gp, y_max, bounds, random_state, n_warmup=100, n_iter=5, dataset=None,
+def acq_max_no_barriers(ac, gp, y_max, bounds, random_state, n_warmup, n_iter, dataset=None,
             gps_barriers=None, space = None, debug=False):
     """
         A function to find the maximum of the acquisition function when not using barrier functions
@@ -430,18 +442,23 @@ class UtilityFunction(object):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             mean, stdf = gp.predict(x,return_std = True)
-        act = -mean
+        act = mean 
 
         # bool to specify lambda fixed or not
         if not static_lambda:
             lam = stdf**2
-
+        else: 
+            lam = 1/static_lambda
+        
         for i in range(len(gps)):
             # Compute mean and std for every gp
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 mean , std = gps[i].predict(x,return_std=True)
-            act = act - lam*(np.where(mean > -1e-5,-1e10,np.log(-mean)) - std**2/(2*mean**2))
+            if not static_lambda:
+                act = act + lam*(np.where(mean > -1e-5,-1e10,np.log(-mean)) - np.where(mean > -1e-5,0,std**2/(2*mean**2)))
+            else:
+                act = act + lam*(np.where(mean > -1e-5,-1e10*(1/lam),np.log(-mean)) - np.where(mean > -1e-5,0,std**2/(2*mean**2)))
         return act
 
 
@@ -453,19 +470,21 @@ class UtilityFunction(object):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             mean , stdf = gp.predict(x,return_std=True)
-        act = (y_max-mean)*norm.cdf((y_max-mean)/stdf) + stdf*norm.cdf((y_max-mean)/stdf)
+        act = -(y_max-mean)*norm.cdf((y_max-mean)/stdf) - stdf*norm.pdf((y_max-mean)/stdf)
 
         # bool to specify lambda fixed or not
         if not static_lambda:
-            lam = (stdf**2)
-
+            lam = stdf**2
+        else:
+            lam = static_lambda
+        act = lam*act
 
         for i in range(len(gps)):
             # Compute mean and std for every gp
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 mean , std = gps[i].predict(x,return_std=True)
-            act = act - lam*(np.where(mean > -1e-5,-1e10,np.log(-mean)) - std**2/(2*mean**2))
+            act = act + (np.where(mean > -1e-10,-1e10,np.log(-mean)) - std**2/(2*mean**2))
         return act
 
 

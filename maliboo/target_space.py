@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 from .util import ensure_rng
 import inspect
+from scipy.stats import qmc
 
 
 class TargetSpace(object):
@@ -75,6 +76,8 @@ class TargetSpace(object):
         if self._debug: print("Initializing TargetSpace with bounds:", pbounds)
 
         # Initialize other members
+        self.seed = random_state
+
         self.random_state = ensure_rng(random_state)
         self.target_func = target_func
         self.initialize_dataset(dataset, target_column)
@@ -97,8 +100,8 @@ class TargetSpace(object):
         if self._debug: print("TargetSpace initialization completed")
 
         self.in_constraint = list()
-        self.n_warmup = 100
-        self.n_iter = 5
+        self.n_warmup = 200
+        self.n_iter = 20
 
     def __len__(self):
         assert len(self._params) == len(self._target)
@@ -178,12 +181,28 @@ class TargetSpace(object):
     def update_indexes(self, ac, gp, y_max, gps_barriers):
 
         gp_barrier_evaluations = ac(self.x_grid, gp=gp, y_max=y_max, gps = gps_barriers)
-        col_mask = np.where(np.isnan(gp_barrier_evaluations),False,True)
+        self.most_promising = np.argmax(gp_barrier_evaluations)
+        col_mask = np.where(gp_barrier_evaluations < -1e5,False,True)
+        # col_mask = np.where(np.isnan(gp_barrier_evaluations),False,True)
         self.best_indexes = np.where(col_mask == True)
     
     def random_best_point(self, random_state):
         idx = random_state.choice(self.best_indexes[0])
         return self.x_grid[idx,:]
+    
+    def most_promising_point(self):
+        return self.x_grid[self.most_promising,:]
+    
+    def init_LHS(self,init_points):
+
+        l_bounds = []
+        u_bounds = []
+        for _, (lower, upper) in enumerate(self._bounds):
+            l_bounds.append(lower)
+            u_bounds.append(upper)
+        sampler = qmc.LatinHypercube(self.dim, seed = self.seed)
+        sample = sampler.random(n=init_points)
+        self.init_sample_scaled = (qmc.scale(sample, l_bounds, u_bounds)).tolist()
 
 
     def params_to_array(self, params):
@@ -380,15 +399,12 @@ class TargetSpace(object):
             if self._bounds is not None:
                 idx = None
                 data = np.empty((1, self.dim))
-                for col, (lower, upper) in enumerate(self._bounds):
-                    data.T[col] = self.random_state.uniform(lower, upper, size=size)
+                for col, _ in enumerate(self._bounds):
+                    data.T[col] = self.init_sample_scaled[-1][col]
+
+                self.init_sample_scaled.pop()
                 if self._debug: print("Uniform randomly sampled point: value {}".format(data))
-            else:
-                idx = None
-                data = np.empty((1,self.dim))
-                for col in range(len(self.barrier_func)):
-                    data.T[col] = self.random_state.uniform(-1000,1000, size = size)
-                if self._debug: print("Uniform randomly sampled point: value {}".format(data))
+
         return idx, self.array_to_params(data.ravel())
 
 
