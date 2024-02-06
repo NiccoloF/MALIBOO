@@ -79,6 +79,9 @@ def acq_max_barriers(ac, gp, y_max, bounds, random_state, n_warmup, n_iter, data
         space.create_grid(n_warmup=n_warmup)
     space.update_indexes(ac = ac, gp = gp, y_max= y_max, gps_barriers= gps_barriers)
     x_init = space.most_promising_point()
+    x_max = x_init
+    max_acq = -ac(x_init.reshape(1,-1), gp=gp, y_max=y_max, gps = gps_barriers)
+    # return x_max, None, max_acq
     # Find the minimum of minus the acquisition function
     res = minimize(lambda x: -ac(x.reshape(1, -1), gp=gp, y_max=y_max, gps = gps_barriers),
                 x_init,bounds=bounds)
@@ -88,7 +91,7 @@ def acq_max_barriers(ac, gp, y_max, bounds, random_state, n_warmup, n_iter, data
         x_max = (res.x).reshape(-1,1)
         max_acq = -np.squeeze(res.fun)
     choice = np.array([True,False])
-    greedy = space.random_state.choice(choice,1, p = [0.8,0.2])
+    greedy = space.random_state.choice(choice,1, p = [0.5,0.5])
     if not greedy:
         max_acq = None
     
@@ -456,9 +459,10 @@ class UtilityFunction(object):
                 warnings.simplefilter("ignore")
                 mean , std = gps[i].predict(x,return_std=True)
             if not static_lambda:
-                act = act + lam*(np.where(mean > -1e-5,-1e10,np.log(-mean)) - np.where(mean > -1e-5,0,std**2/(2*mean**2)))
+                act = act + lam*(np.where(mean > -1e-5,-1e10,np.log(-mean)) + np.where(mean > -1e-5,0,std**2/(2*mean**2)))
+                # act = act + lam*(np.log(-mean) - std**2/(2*mean**2))
             else:
-                act = act + lam*(np.where(mean > -1e-5,-1e10*(1/lam),np.log(-mean)) - np.where(mean > -1e-5,0,std**2/(2*mean**2)))
+                act = act + lam*(np.where(mean > -1e-30,-1e20*(1/lam),np.log(-mean)) - np.where(mean > -1e-5,0,std**2/(2*mean**2)))
         return act
 
 

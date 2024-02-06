@@ -100,8 +100,9 @@ class TargetSpace(object):
         if self._debug: print("TargetSpace initialization completed")
 
         self.in_constraint = list()
-        self.n_warmup = 200
-        self.n_iter = 20
+        self.n_warmup = 30
+
+        self.n_iter = 5
 
     def __len__(self):
         assert len(self._params) == len(self._target)
@@ -173,16 +174,22 @@ class TargetSpace(object):
             raise ValueError("target_barriers not defined")
         
     def create_grid(self, n_warmup):
-            
-        x_grid = [np.linspace(bound[0],bound[1], n_warmup) for bound in self.bounds]
-        x_mesh = np.array(np.meshgrid(*x_grid)).reshape(-1,self.bounds.shape[0])
-        self.x_grid = x_mesh
+        
+        l_bounds = []
+        u_bounds = []
+        for _, (lower, upper) in enumerate(self._bounds):
+            l_bounds.append(lower)
+            u_bounds.append(upper)
+        unscaled_samples = self.LHS_sampler.random(n=n_warmup**(self.dim))
+        self.x_grid = qmc.scale(unscaled_samples, l_bounds, u_bounds)
     
     def update_indexes(self, ac, gp, y_max, gps_barriers):
 
         gp_barrier_evaluations = ac(self.x_grid, gp=gp, y_max=y_max, gps = gps_barriers)
+        col_mask = np.where(np.isnan(gp_barrier_evaluations),False,True)
+        gp_barrier_evaluations[np.logical_not(col_mask)] = -np.inf
         self.most_promising = np.argmax(gp_barrier_evaluations)
-        col_mask = np.where(gp_barrier_evaluations < -1e5,False,True)
+        col_mask = np.where(gp_barrier_evaluations < -1e8,False,True)
         # col_mask = np.where(np.isnan(gp_barrier_evaluations),False,True)
         self.best_indexes = np.where(col_mask == True)
     
@@ -201,6 +208,7 @@ class TargetSpace(object):
             l_bounds.append(lower)
             u_bounds.append(upper)
         sampler = qmc.LatinHypercube(self.dim, seed = self.seed)
+        self.LHS_sampler = sampler
         sample = sampler.random(n=init_points)
         self.init_sample_scaled = (qmc.scale(sample, l_bounds, u_bounds)).tolist()
 
