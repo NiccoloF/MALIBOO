@@ -81,7 +81,7 @@ def acq_max_barriers(ac, gp, y_max, bounds, random_state, n_warmup, n_iter, data
     x_init = space.most_promising_point()
     x_max = x_init
     max_acq = -ac(x_init.reshape(1,-1), gp=gp, y_max=y_max, gps = gps_barriers)
-    # return x_max, None, max_acq
+    return x_max, None, max_acq
     # Find the minimum of minus the acquisition function
     res = minimize(lambda x: -ac(x.reshape(1, -1), gp=gp, y_max=y_max, gps = gps_barriers),
                 x_init,bounds=bounds)
@@ -219,13 +219,14 @@ def acq_max_no_barriers(ac, gp, y_max, bounds, random_state, n_warmup, n_iter, d
     return np.clip(x_max, bounds[:, 0], bounds[:, 1]), None, max_acq
 
 
-class UtilityFunction(object):
+class UtilityFunction(
+):
     """
     An object to compute the acquisition functions.
 
     See the maximize() function in bayesian_optimization.py for a description of the constructor arguments.
     """
-    def __init__(self, kind, kappa, xi, kappa_decay=1, kappa_decay_delay=0, acq_info={}, debug=False):
+    def __init__(self, kind, kappa, xi, kappa_decay=1, kappa_decay_delay=0,mean_p=1.,std_p = 1.,acq_info={}, debug=False):
 
         self._debug = debug
         self.kappa = kappa
@@ -234,6 +235,8 @@ class UtilityFunction(object):
         self.xi = xi
         self.kind = kind
         self._iters_counter = 0
+        self.mean_p = mean_p
+        self.std_p = std_p
 
         self.initialize_acq_info(acq_info, kind)
 
@@ -336,9 +339,9 @@ class UtilityFunction(object):
             return self._eic_ml(x, gp, y_max, self.xi, self.eic_ml_var, self.ml_model, self.ml_bounds,
                                 self.eic_bounds, self.eic_P_func, self.eic_Q_func, self.eic_ml_exp_B)
         if self.kind == 'eb':
-            return self._eb(x, gp, gps,self.static_lambda)
+            return self._eb(x, gp, gps,self.mean_p,self.std_p,self.static_lambda)
         if self.kind == 'eic_bm':
-            return self._eic_bm(x, gp, y_max, gps,self.static_lambda)
+            return self._eic_bm(x, gp, y_max, gps,self.mean_p,self.std_p,self.static_lambda)
         raise NotImplementedError("The utility function {} has not been implemented.".format(self.kind))
 
 
@@ -440,7 +443,7 @@ class UtilityFunction(object):
     
     # check how to deal with lambda -> up to now initialized with a fixed value
     @staticmethod
-    def _eb(x,gp,gps,static_lambda,lam = 0.1):
+    def _eb(x,gp,gps,mean_p,std_p,static_lambda,lam = 0.1):
         """Expected Barrier"""
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
@@ -449,7 +452,7 @@ class UtilityFunction(object):
 
         # bool to specify lambda fixed or not
         if not static_lambda:
-            lam = stdf**2
+            lam = std_p * stdf**2
         else: 
             lam = 1/static_lambda
         
@@ -459,36 +462,37 @@ class UtilityFunction(object):
                 warnings.simplefilter("ignore")
                 mean , std = gps[i].predict(x,return_std=True)
             if not static_lambda:
-                act = act + lam*(np.where(mean > -1e-5,-1e10,np.log(-mean)) + np.where(mean > -1e-5,0,std**2/(2*mean**2)))
-                # act = act + lam*(np.log(-mean) - std**2/(2*mean**2))
+                #act = act + lam*(np.where(mean > -1e-5,-1e10,np.log(-mean)) + np.where(mean > -1e-5,0,std**2/(2*mean**2)))
+                act = act + lam*(np.log(-mean) )#- std**2/(2*mean**2))
             else:
-                act = act + lam*(np.where(mean > -1e-30,-1e20*(1/lam),np.log(-mean)) - np.where(mean > -1e-5,0,std**2/(2*mean**2)))
+                act = act + lam*(np.where(mean > -1e-30,-1e20,np.log(-mean_p * mean)) - np.where(mean > -1e-5,0,std**2/(2*mean**2)))
         return act
 
 
     @staticmethod
-    def _eic_bm(x,gp,y_max,gps,static_lambda,lam = 0.1):
+    def _eic_bm(x,gp,y_max,gps,mean_p,std_p,static_lambda,lam = 0.1):
 
         """Expected Improvement Constrained with Barrier Method"""
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             mean , stdf = gp.predict(x,return_std=True)
-        act = -(y_max-mean)*norm.cdf((y_max-mean)/stdf) - stdf*norm.pdf((y_max-mean)/stdf)
+        act = (mean-y_max)*norm.cdf((mean-y_max)/stdf) + stdf*norm.pdf((mean-y_max)/stdf)
 
         # bool to specify lambda fixed or not
         if not static_lambda:
-            lam = stdf**2
+            lam = std_p * stdf**2
         else:
-            lam = static_lambda
-        act = lam*act
+            lam = 1/static_lambda
+        #act = lam*act
 
         for i in range(len(gps)):
             # Compute mean and std for every gp
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 mean , std = gps[i].predict(x,return_std=True)
-            act = act + (np.where(mean > -1e-10,-1e10,np.log(-mean)) - std**2/(2*mean**2))
+            #act = act + lam*(np.where(mean > -1e-10,-1e10,np.log(-mean)) - std**2/(2*mean**2))
+            act = act + lam*(np.where(mean > -1e-10,-1e10,np.log(-mean_p * mean)) - np.where(mean > -1e-5,0,std**2/(2*mean**2)))
         return act
 
 

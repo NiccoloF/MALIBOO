@@ -84,7 +84,7 @@ class BayesianOptimization(Observable):
     debug: bool, optional (default=False)
         Whether or not to print detailed debugging information
     """
-    def __init__(self, f=None, pbounds=None, random_state=None, verbose=2, bounds_transformer=None,
+    def __init__(self, f=None, pbounds=None,random_state=None, verbose=2, bounds_transformer=None,
                  dataset=None, output_path=None, target_column=None,  barrier_func = None, debug=False):
         # Initialize members from arguments
         self._random_state = ensure_rng(random_state)
@@ -325,6 +325,8 @@ class BayesianOptimization(Observable):
                  kappa=2.576,
                  kappa_decay=1,
                  kappa_decay_delay=0,
+                 mean_p = 1.,
+                 std_p = 1.,
                  xi=0.0,
                  acq_info={},
                  stop_crit_info={},
@@ -414,6 +416,8 @@ class BayesianOptimization(Observable):
                                xi=xi,
                                kappa_decay=kappa_decay,
                                kappa_decay_delay=kappa_decay_delay,
+                               mean_p = mean_p,
+                               std_p = std_p,
                                acq_info=acq_info,
                                debug=self._debug)
         if self._debug: print("Initializing StoppingCriterion with stop_crit_info = {}".format(stop_crit_info))

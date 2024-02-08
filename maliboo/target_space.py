@@ -100,8 +100,7 @@ class TargetSpace(object):
         if self._debug: print("TargetSpace initialization completed")
 
         self.in_constraint = list()
-        self.n_warmup = 30
-
+        self.n_warmup = 200
         self.n_iter = 5
 
     def __len__(self):
